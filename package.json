@@ -4,13 +4,25 @@
   "version": "1.0.0",
   "scripts": {
     "dev": "astro dev",
+    "dev:cloudflare": "astro dev --config astro.config.cloudflare.mjs",
     "build": "astro build",
+    "build:cloudflare": "astro build --config astro.config.cloudflare.mjs",
     "preview": "node dist/server/entry.mjs",
     "start": "node dist/server/entry.mjs",
+    "deploy": "npm run build:cloudflare && wrangler d1 execute DB --remote --file=schema/schema.sql && wrangler deploy",
     "astro": "astro",
     "db:init": "node scripts/init-db.mjs"
   },
+  "cloudflare": {
+    "bindings": {
+      "AUTH_KEY": {
+        "type": "secret",
+        "description": "Secret key for authenticating paste creation. Choose a secure random string."
+      }
+    }
+  },
   "dependencies": {
+    "@astrojs/cloudflare": "^12.6.12",
     "@astrojs/node": "^9.0.0",
     "astro": "^5.16.4",
     "better-sqlite3": "^11.6.0",
