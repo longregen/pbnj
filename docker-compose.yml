@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  pbnj:
+    build: .
+    ports:
+      - "4321:4321"
+    volumes:
+      - pbnj-data:/data
+    environment:
+      - AUTH_KEY=${AUTH_KEY:-changeme}
+      - DATABASE_PATH=/data/pbnj.db
+      - HOST=0.0.0.0
+      - PORT=4321
+    restart: unless-stopped
+
+volumes:
+  pbnj-data:

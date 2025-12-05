@@ -1,0 +1,38 @@
+# Dependencies
+node_modules
+
+# Build outputs
+dist
+
+# Data
+data
+*.db
+*.db-wal
+*.db-shm
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Nix
+result
+.direnv
+
+# Environment files with secrets
+.env
+.dev.vars
+
+# Documentation
+*.md
+!README.md
+docs
+
+# Cloudflare (no longer used)
+wrangler.toml
+.wrangler
