@@ -30,7 +30,7 @@ jobs:
       - name: Compute npm dependencies hash
         id: npm-hash
         run: |
-          HASH=$(nix-prefetch-npm-deps package-lock.json)
+          HASH=$(nix run nixpkgs#prefetch-npm-deps -- package-lock.json)
           echo "hash=$HASH" >> $GITHUB_OUTPUT
           echo "Computed npm deps hash: $HASH"
 
@@ -67,7 +67,7 @@ jobs:
       - name: Compute npm dependencies hash
         id: npm-hash
         run: |
-          HASH=$(nix-prefetch-npm-deps package-lock.json)
+          HASH=$(nix run nixpkgs#prefetch-npm-deps -- package-lock.json)
           echo "hash=$HASH" >> $GITHUB_OUTPUT
 
       - name: Update flake with correct hash

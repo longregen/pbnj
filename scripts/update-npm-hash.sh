@@ -9,7 +9,7 @@ FLAKE_FILE="flake.nix"
 echo "Computing npm dependencies hash..."
 
 # Use nix to compute the hash
-HASH=$(nix-prefetch-npm-deps package-lock.json 2>/dev/null || true)
+HASH=$(nix run nixpkgs#prefetch-npm-deps -- package-lock.json 2>/dev/null || true)
 
 if [ -z "$HASH" ]; then
     echo "Error: Could not compute hash. Make sure nix is installed and package-lock.json exists."
