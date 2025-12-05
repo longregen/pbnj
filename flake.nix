@@ -15,111 +15,134 @@
 
         nodejs = pkgs.nodejs_20;
 
-        # Runtime container image for PBNJ
-        # Usage: Build your app first (npm run build), then run:
-        #   nix build .#container
-        #   docker load < result
-        #   docker run -v $(pwd)/dist:/app/dist -v $(pwd)/node_modules:/app/node_modules \
-        #              -v $(pwd)/schema:/app/schema -v pbnj-data:/data \
-        #              -e AUTH_KEY=your-key -p 4321:4321 pbnj:latest
-        runtimeImage = pkgs.dockerTools.buildLayeredImage {
+        # Build the PBNJ application using Nix's buildNpmPackage
+        # This provides full isolation and reproducibility
+        pbnj = pkgs.buildNpmPackage {
+          pname = "pbnj";
+          version = "1.0.0";
+
+          src = ./.;
+
+          # To update this hash:
+          # 1. Change it to: npmDepsHash = pkgs.lib.fakeHash;
+          # 2. Run: nix build
+          # 3. Copy the correct hash from the error message
+          npmDepsHash = pkgs.lib.fakeHash;
+
+          # Node.js version
+          nodejs = nodejs;
+
+          # Build dependencies for native modules (better-sqlite3)
+          nativeBuildInputs = with pkgs; [
+            python3
+            pkg-config
+          ];
+
+          buildInputs = with pkgs; [
+            sqlite
+          ];
+
+          # Build the Astro application
+          buildPhase = ''
+            runHook preBuild
+            npm run build
+            runHook postBuild
+          '';
+
+          # Install the built application
+          installPhase = ''
+            runHook preInstall
+
+            mkdir -p $out/lib/pbnj
+            cp -r dist $out/lib/pbnj/
+            cp -r node_modules $out/lib/pbnj/
+            cp -r schema $out/lib/pbnj/
+            cp -r scripts $out/lib/pbnj/
+            cp package.json $out/lib/pbnj/
+
+            # Create wrapper script
+            mkdir -p $out/bin
+            cat > $out/bin/pbnj <<EOF
+            #!${pkgs.bashInteractive}/bin/bash
+            cd $out/lib/pbnj
+            exec ${nodejs}/bin/node scripts/init-db.mjs && exec ${nodejs}/bin/node dist/server/entry.mjs "\$@"
+            EOF
+            chmod +x $out/bin/pbnj
+
+            # Create a simple start script
+            cat > $out/bin/pbnj-server <<EOF
+            #!${pkgs.bashInteractive}/bin/bash
+            cd $out/lib/pbnj
+            ${nodejs}/bin/node scripts/init-db.mjs
+            exec ${nodejs}/bin/node dist/server/entry.mjs "\$@"
+            EOF
+            chmod +x $out/bin/pbnj-server
+
+            runHook postInstall
+          '';
+
+          meta = with pkgs.lib; {
+            description = "A self-hosted pastebin with memorable URLs";
+            homepage = "https://github.com/longregen/pbnj";
+            license = licenses.mit;
+            platforms = platforms.all;
+          };
+        };
+
+        # Container image with the fully built application
+        containerImage = pkgs.dockerTools.buildLayeredImage {
           name = "pbnj";
           tag = "latest";
 
           contents = [
             pkgs.bashInteractive
             pkgs.coreutils
-            pkgs.findutils
             pkgs.cacert
             nodejs
-            pkgs.sqlite
+            pbnj
           ];
 
           config = {
             Env = [
               "NODE_ENV=production"
               "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
-              "PATH=/bin:${pkgs.coreutils}/bin:${pkgs.findutils}/bin:${nodejs}/bin:${pkgs.sqlite}/bin"
+              "PATH=/bin:${pkgs.coreutils}/bin:${nodejs}/bin:${pbnj}/bin"
               "HOME=/root"
               "HOST=0.0.0.0"
               "PORT=4321"
               "DATABASE_PATH=/data/pbnj.db"
             ];
-            WorkingDir = "/app";
+            WorkingDir = "${pbnj}/lib/pbnj";
             ExposedPorts = {
               "4321/tcp" = {};
             };
             Volumes = {
               "/data" = {};
             };
-            Entrypoint = [ "${pkgs.bashInteractive}/bin/bash" "-c" ];
-            Cmd = [ "node scripts/init-db.mjs && exec node dist/server/entry.mjs" ];
+            Entrypoint = [ "${pbnj}/bin/pbnj-server" ];
           };
 
           extraCommands = ''
-            mkdir -p app tmp root data
+            mkdir -p tmp data
             chmod 1777 tmp
             chmod 777 data
-          '';
-        };
-
-        # Builder container with all build dependencies
-        # Useful for CI environments that need to build native npm modules
-        builderImage = pkgs.dockerTools.buildLayeredImage {
-          name = "pbnj-builder";
-          tag = "latest";
-
-          contents = [
-            pkgs.bashInteractive
-            pkgs.coreutils
-            pkgs.findutils
-            pkgs.gnugrep
-            pkgs.gnused
-            pkgs.gawk
-            pkgs.cacert
-            pkgs.curl
-            pkgs.git
-            nodejs
-            pkgs.sqlite
-            # Build tools for native npm modules
-            pkgs.python3
-            pkgs.gnumake
-            pkgs.gcc
-            pkgs.pkg-config
-          ];
-
-          config = {
-            Env = [
-              "NODE_ENV=development"
-              "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
-              "PATH=/bin:${pkgs.coreutils}/bin:${pkgs.findutils}/bin:${pkgs.gnugrep}/bin:${pkgs.gnused}/bin:${pkgs.gawk}/bin:${pkgs.curl}/bin:${pkgs.git}/bin:${nodejs}/bin:${pkgs.sqlite}/bin:${pkgs.python3}/bin:${pkgs.gnumake}/bin:${pkgs.gcc}/bin"
-              "HOME=/root"
-            ];
-            WorkingDir = "/app";
-            Cmd = [ "${pkgs.bashInteractive}/bin/bash" ];
-          };
-
-          extraCommands = ''
-            mkdir -p app tmp root
-            chmod 1777 tmp
           '';
         };
 
       in
       {
         packages = {
-          default = runtimeImage;
-          container = runtimeImage;
-          builder = builderImage;
+          default = pbnj;
+          pbnj = pbnj;
+          container = containerImage;
         };
 
-        # Development shell with all tools needed for local development
+        # Development shell
         devShells.default = pkgs.mkShell {
           buildInputs = [
             nodejs
             pkgs.sqlite
             pkgs.git
-            # Build tools for better-sqlite3
             pkgs.python3
             pkgs.gnumake
             pkgs.gcc
@@ -130,32 +153,26 @@
             echo "PBNJ Development Environment"
             echo "Node.js: $(node --version)"
             echo "npm: $(npm --version)"
-            echo "SQLite: $(sqlite3 --version)"
             echo ""
-            echo "Node.js (standalone) commands:"
-            echo "  npm run dev          - Start dev server"
-            echo "  npm run build        - Build for production"
-            echo "  npm run start        - Run production server"
+            echo "Development:"
+            echo "  npm install && npm run dev     - Start dev server"
             echo ""
-            echo "Cloudflare commands:"
-            echo "  npm run dev:cloudflare   - Start Cloudflare dev server"
-            echo "  npm run build:cloudflare - Build for Cloudflare"
-            echo "  npm run deploy           - Deploy to Cloudflare"
+            echo "Nix build:"
+            echo "  nix build                      - Build application"
+            echo "  nix build .#container          - Build container image"
             echo ""
-            echo "Container commands:"
-            echo "  nix build .#container    - Build runtime container"
-            echo "  nix build .#builder      - Build builder container"
+            echo "Run container:"
+            echo "  docker load < result"
+            echo "  docker run -e AUTH_KEY=secret -p 4321:4321 -v pbnj-data:/data pbnj"
           '';
         };
 
-        # Minimal CI shell for GitHub Actions
         devShells.ci = pkgs.mkShell {
           buildInputs = [
             nodejs
             pkgs.sqlite
             pkgs.git
             pkgs.cacert
-            # Build tools for better-sqlite3
             pkgs.python3
             pkgs.gnumake
             pkgs.gcc
